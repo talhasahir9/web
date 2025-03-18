@@ -1,88 +1,91 @@
-import undetected_chromedriver as uc
-import random
 import time
-import threading
+import random
 import requests
-from fake_useragent import UserAgent
-from stem import Signal
+import socks
+import socket
+import threading
 from stem.control import Controller
+from stem import Signal
+from fake_useragent import UserAgent
 
-# List of Tier 1 countries
-TIER_1_COUNTRIES = {"US", "CA", "GB", "AU", "DE", "FR"}
+# Tor settings
+SOCKS_PORT = 9050
+CONTROL_PORT = 9051
+TOR_PASSWORD = "your_tor_password"  # Use the actual password you set
 
-# Load URLs from file
-def load_urls():
-    with open("urls.txt", "r") as file:
-        return [line.strip() for line in file if line.strip()]
+socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", SOCKS_PORT)
+socket.socket = socks.socksocket
 
-# Change Tor IP
+TIER_1_COUNTRIES = {"US", "CA", "GB", "DE", "FR", "AU", "NZ"}  # Add more if needed
+
+ua = UserAgent()  # Generate random user agents
+
 def change_tor_ip():
-    with Controller.from_port(port=9051) as controller:
-        controller.authenticate(password="your_tor_password")  # Set Tor control password
+    """Request a new Tor identity by sending a signal to the Tor control port."""
+    with Controller.from_port(port=CONTROL_PORT) as controller:
+        controller.authenticate(password=TOR_PASSWORD)
         controller.signal(Signal.NEWNYM)
-        time.sleep(10)  # Allow time for IP change
 
-# Get current Tor IP and country
-def get_tor_ip_country():
+def get_ip_info():
+    """Fetch current IP and country using an external service."""
     try:
-        proxies = {"http": "socks5h://127.0.0.1:9050", "https": "socks5h://127.0.0.1:9050"}
-        ip_info = requests.get("https://ipinfo.io/json", proxies=proxies, timeout=10).json()
-        return ip_info.get("ip", "Unknown"), ip_info.get("country", "Unknown")
-    except:
+        headers = {"User-Agent": ua.random}
+        response = requests.get("https://ipinfo.io/json", headers=headers, timeout=10)
+        data = response.json()
+        ip = data.get("ip", "Unknown")
+        country = data.get("country", "Unknown")
+        return ip, country
+    except Exception:
         return "Unknown", "Unknown"
 
-# Initialize
-URLS = load_urls()
-NUM_THREADS = 5  # Adjust as needed
-ua = UserAgent()
-
-def visit_website():
-    """Visits a website only if the Tor IP is from a Tier 1 country."""
-    while True:
-        url = random.choice(URLS)
-
-        # Keep changing Tor IP until we get a Tier 1 country
-        while True:
-            tor_ip, country = get_tor_ip_country()
-            if country in TIER_1_COUNTRIES:
-                break  # Use this IP
-            print(f"Skipping IP: {tor_ip} (Country: {country}) - Not Tier 1")
-            change_tor_ip()  # Change IP and try again
-
-        chrome_options = uc.ChromeOptions()
-        chrome_options.add_argument("--proxy-server=socks5h://127.0.0.1:9050")  # Use Tor proxy
-        chrome_options.add_argument(f"user-agent={ua.random}")  # Random User-Agent
-        chrome_options.add_argument("--headless=new")  # Run headless
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")  # Avoid detection
-
-        # Start undetected browser
-        driver = uc.Chrome(options=chrome_options)
+def visit_website(url):
+    """Visit a website while ensuring the IP belongs to a Tier 1 country."""
+    for _ in range(5):  # Try changing IP up to 5 times
+        ip, country = get_ip_info()
+        if country in TIER_1_COUNTRIES:
+            try:
+                headers = {"User-Agent": ua.random}
+                response = requests.get(url, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    print(f"[✔] Visited {url} from {country} (IP: {ip})")
+                    return
+                else:
+                    print(f"[✘] Failed to visit {url}. Status Code: {response.status_code}")
+            except Exception as e:
+                print(f"[!] Error visiting {url}: {e}")
+        else:
+            print(f"[!] Skipping IP: {ip} (Country: {country}) - Not Tier 1")
         
-        try:
-            driver.get(url)
-            time.sleep(random.uniform(10, 30))  # Simulate human browsing
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")  # Scroll down
-            time.sleep(random.uniform(5, 15))  # Stay longer on the page
-            
-            print(f"Visited: {url} | IP: {tor_ip} | Country: {country} ✅")
-        
-        except Exception as e:
-            print(f"Error visiting {url}: {e}")
-        finally:
-            driver.quit()  # Close browser
+        print("[*] Changing Tor IP...")
+        change_tor_ip()
+        time.sleep(random.randint(5, 10))  # Wait for Tor to apply the new IP
 
-        change_tor_ip()  # Change IP after each request
-        time.sleep(random.uniform(30, 120))  # Wait before next visit
+def worker(urls):
+    """Thread worker function to visit websites."""
+    for url in urls:
+        visit_website(url)
+        wait_time = random.uniform(60, 150)  # Wait 1 to 2.5 minutes
+        print(f"[*] Waiting {wait_time:.2f} seconds before next visit...")
+        time.sleep(wait_time)
 
-# Start multiple threads
-threads = []
-for _ in range(NUM_THREADS):
-    thread = threading.Thread(target=visit_website)
-    thread.start()
-    threads.append(thread)
+def main():
+    """Load URLs and start multiple threads."""
+    with open("urls.txt", "r") as file:
+        urls = [line.strip() for line in file if line.strip()]
+    
+    num_threads = min(5, len(urls))  # Limit to 5 threads or number of URLs
+    chunk_size = len(urls) // num_threads
+    threads = []
 
-# Keep the threads running
-for thread in threads:
-    thread.join()
+    for i in range(num_threads):
+        start = i * chunk_size
+        end = None if i == num_threads - 1 else (i + 1) * chunk_size
+        thread = threading.Thread(target=worker, args=(urls[start:end],))
+        thread.start()
+        threads.append(thread)
+
+    for thread in threads:
+        thread.join()
+
+if __name__ == "__main__":
+    main()
