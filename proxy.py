@@ -26,10 +26,14 @@ BROWSER_LIFETIME = 10  # Restart browser after 10 visits
 def load_urls():
     try:
         with open(URLS_FILE, "r") as file:
-            return [line.strip() for line in file if line.strip()]
+            urls = [line.strip() for line in file if line.strip()]
+            if not urls:
+                print("[❌] No URLs found in urls.txt. Please add at least one URL!")
+                exit()
+            return urls
     except FileNotFoundError:
-        print(f"[!] Error: {URLS_FILE} not found!")
-        return []
+        print(f"[❌] Error: {URLS_FILE} not found! Create the file and add URLs.")
+        exit()
 
 # Fetch & validate proxies
 def get_free_proxies():
@@ -41,15 +45,18 @@ def get_free_proxies():
                 for line in response.text.split("\n"):
                     if line.strip():
                         all_proxies.add(f"http://{line.strip()}")
-            print(f"[+] Fetched {len(all_proxies)} proxies from {api}")
+            print(f"[✅] Fetched {len(all_proxies)} proxies from {api}")
         except Exception as e:
-            print(f"[!] Error fetching proxies: {e}")
+            print(f"[❌] Error fetching proxies: {e}")
+    if not all_proxies:
+        print("[❌] No proxies available. Exiting...")
+        exit()
     return list(all_proxies)
 
 def validate_proxy(proxy):
     try:
         response = requests.get("https://api64.ipify.org?format=json", proxies={"http": proxy, "https": proxy}, timeout=5)
-        print(f"[+] Proxy {proxy} is working. IP: {response.json().get('ip', 'Unknown')}")
+        print(f"[✅] Proxy {proxy} is working. IP: {response.json().get('ip', 'Unknown')}")
         return True
     except:
         return False
@@ -62,7 +69,11 @@ def remove_failed_proxy(proxy, proxies):
 
 def refresh_proxies():
     print("[🔄] Updating proxies...")
-    return [proxy for proxy in get_free_proxies() if validate_proxy(proxy)]
+    proxies = [proxy for proxy in get_free_proxies() if validate_proxy(proxy)]
+    if not proxies:
+        print("[❌] No working proxies available. Exiting...")
+        exit()
+    return proxies
 
 # Apply stealth mode
 def enable_stealth(page):
@@ -85,9 +96,9 @@ def scroll_page(page):
             time.sleep(random.uniform(2, 4))
             scroll_px = random.choice([100, 200, 300])
             page.evaluate(f"window.scrollBy(0, {scroll_px})")
-        print("[+] Scrolling complete")
+        print("[📜] Scrolling complete")
     except Exception as e:
-        print(f"[!] Error while scrolling: {e}")
+        print(f"[❌] Error while scrolling: {e}")
 
 # Accept cookies
 def accept_cookies(page):
@@ -96,22 +107,10 @@ def accept_cookies(page):
         for button in buttons.all():
             if any(word in button.inner_text().lower() for word in ["accept", "agree", "ok"]):
                 human_like_click(page, button)
-                print("[+] Accepted cookies")
+                print("[🍪] Accepted cookies")
                 break
     except Exception as e:
-        print(f"[!] Error accepting cookies: {e}")
-
-# Close popups
-def close_popups(page):
-    try:
-        popups = page.locator("button, .close, .dismiss")
-        for popup in popups.all():
-            if any(word in popup.inner_text().lower() for word in ["close", "dismiss", "×"]):
-                human_like_click(page, popup)
-                print("[+] Closed popup")
-                break
-    except Exception as e:
-        print(f"[!] Error closing popups: {e}")
+        print(f"[❌] Error accepting cookies: {e}")
 
 # Safe clicking (avoids ads & downloads)
 def safe_clicks(page):
@@ -126,11 +125,11 @@ def safe_clicks(page):
                 link = random.choice(safe_links)
                 if link.is_visible():
                     human_like_click(page, link)
-                    print("[+] Clicked a safe link")
+                    print("[🔗] Clicked a safe link")
                     time.sleep(random.uniform(3, 7))
                     scroll_page(page)
     except Exception as e:
-        print(f"[!] Error during safe clicks: {e}")
+        print(f"[❌] Error during safe clicks: {e}")
 
 # Multi-device browsing simulation
 def get_random_device():
@@ -145,9 +144,6 @@ def get_random_device():
 
 # Visit URL using a proxy
 def visit_url(url, proxies):
-    global BROWSER_LIFETIME
-    visit_count = 0
-
     while True:
         if not proxies:
             print("[⚠️] No working proxies left! Refreshing...")
@@ -155,35 +151,39 @@ def visit_url(url, proxies):
 
         proxy = proxies.pop(0)
         device = get_random_device()
-        print(f"Using proxy: {proxy} with {device['browser']} for {url}")
+        print(f"[🌍] Using proxy: {proxy} with {device['browser']} for {url}")
 
         try:
             with sync_playwright() as p:
-                browser_type = p.chromium if "Chrome" in device["browser"] else p.firefox if "Firefox" in device["browser"] else p.webkit
-                browser = browser_type.launch(headless=False, proxy={"server": proxy})
+                browser = p.chromium.launch(headless=False, proxy={"server": proxy})
                 context = browser.new_context(user_agent=device["user_agent"])
                 page = context.new_page()
 
                 enable_stealth(page)
-
-                print(f"Visiting: {url}")
+                print(f"[🔍] Visiting: {url}")
                 page.goto(url, timeout=90000)
 
                 accept_cookies(page)
-                close_popups(page)
                 scroll_page(page)
                 safe_clicks(page)
 
                 time.sleep(random.uniform(90, 150))
-                visit_count += 1
-
-                if visit_count >= BROWSER_LIFETIME:
-                    print("[🔄] Restarting browser to free memory...")
-                    break
-
                 browser.close()
 
         except Exception as e:
-            print(f"[!] Error visiting {url}: {e}")
+            print(f"[❌] Error visiting {url}: {e}")
             remove_failed_proxy(proxy, proxies)
             time.sleep(5)
+
+# Start browsing
+if __name__ == "__main__":
+    print("[🚀] Script is starting...")
+    num_threads = int(input("Enter number of threads: "))
+    urls = load_urls()
+    proxies = refresh_proxies()
+
+    threads = [threading.Thread(target=visit_url, args=(random.choice(urls), proxies)) for _ in range(num_threads)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
