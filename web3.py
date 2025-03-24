@@ -12,14 +12,14 @@ TOR_SOCKS_PROXY = "socks5://127.0.0.1:9150"
 TOR_CONTROL_PORT = 9051
 TOR_CONTROL_PASSWORD = "Tor123"
 
-# Load URLs from file
+# Global visit counter
+visit_count = 0
+visit_lock = threading.Lock()
+
+# Read URLs from file
 def load_urls(file_path="urls.txt"):
-    try:
-        with open(file_path, "r") as file:
-            return [line.strip() for line in file if line.strip()]
-    except FileNotFoundError:
-        print(f"[!] Error: {file_path} not found.")
-        return []
+    with open(file_path, "r") as file:
+        return [line.strip() for line in file if line.strip()]
 
 # Get current IP via Tor
 def get_current_ip():
@@ -30,62 +30,68 @@ def get_current_ip():
             timeout=10
         )
         return response.json().get("IP", "Unknown")
-    except requests.RequestException as e:
+    except Exception as e:
         print(f"[!] Error getting IP: {e}")
         return "Unknown"
 
-# Change Tor IP
+# Change Tor IP before each thread starts
 def change_tor_ip():
     try:
         with Controller.from_port(port=TOR_CONTROL_PORT) as controller:
             controller.authenticate(password=TOR_CONTROL_PASSWORD)
             controller.signal(Signal.NEWNYM)
-            time.sleep(random.uniform(10, 15))
+            time.sleep(random.uniform(10, 15))  # Randomized wait time
             print(f"[+] Tor IP changed successfully!")
     except Exception as e:
         print(f"[!] Error changing IP: {e}")
 
-# Scroll page randomly
+# Scroll page with random behavior
 def scroll_page(page):
     try:
-        for _ in range(random.randint(60, 85)):
+        for _ in range(random.randint(65, 95)):  # Randomized range
             scroll_px = random.choice([100, 200, 300, 500])
             page.evaluate(f"window.scrollBy(0, {scroll_px})")
-            time.sleep(random.uniform(1, 3))
+            time.sleep(random.uniform(1, 3))  # More natural scrolling time
         print("[+] Scrolling complete")
     except Exception as e:
         print(f"[!] Error while scrolling: {e}")
 
-# Accept cookies if prompted
+# Accept cookies
 def accept_cookies(page):
     try:
         buttons = page.locator("button")
         for button in buttons.all():
             text = button.inner_text().lower()
             if "accept" in text or "agree" in text or "ok" in text:
-                time.sleep(random.uniform(2, 5))
+                time.sleep(random.uniform(2, 5))  # Human-like delay before clicking
                 button.click()
                 print("[+] Accepted cookies/privacy notice")
                 break
     except Exception as e:
         print(f"[!] Error accepting cookies: {e}")
 
-# Click "Next Page" or an internal link
+# Click "Next Page" or an internal article
 def next_page_click(page):
     try:
         all_links = page.locator("a").all()
-        visible_links = [link for link in all_links if link.is_visible()]
-        next_page_links = [link for link in visible_links if link.inner_text().lower() in ["next", "next page", "continue", "→"]]
-        internal_links = [link for link in visible_links if link.get_attribute("href") and not link.get_attribute("href").startswith("http")]
+        visible_links = [link for link in all_links if link.is_visible()]  # Filter visible links
+
+        next_page_links = [
+            link for link in visible_links if link.inner_text().lower() in ["next", "next page", "continue", "→"]
+        ]
+
+        internal_links = [
+            link for link in visible_links if link.get_attribute("href") and not link.get_attribute("href").startswith("http")
+        ]
 
         if next_page_links:
             link = random.choice(next_page_links)
-            time.sleep(random.uniform(3, 7))
+            time.sleep(random.uniform(3, 7))  # Random delay before clicking
             link.click()
             print("[+] Clicked 'Next Page'")
         elif internal_links:
             link = random.choice(internal_links)
-            time.sleep(random.uniform(3, 7))
+            time.sleep(random.uniform(3, 7))  # Random delay before clicking
             link.click()
             print("[+] Clicked an internal article link")
         else:
@@ -93,7 +99,7 @@ def next_page_click(page):
     except Exception as e:
         print(f"[!] Error during clicking: {e}")
 
-# Stealth mode (no ad-blocking)
+# Manual stealth mode
 def apply_stealth(page):
     page.evaluate(
         """
@@ -105,21 +111,14 @@ def apply_stealth(page):
         """
     )
 
-# User agents (20 total)
-user_agents = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_1 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Version/16.1 Mobile/15E148 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 12; SM-G991U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/110.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_4) AppleWebKit/537.36 (KHTML, like Gecko) Safari/536.36",
-    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 15_5 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Version/15.5 Mobile/15E148 Safari/537.36"
-]
+# Update visit count
+def update_visit_count():
+    global visit_count
+    with visit_lock:
+        visit_count += 1
+        print(f"[+] Total visits so far: {visit_count}")
 
-# Visit URL with stealth
+# Visit URL with stealth and click "Next Page"
 def visit_url(url):
     print(f"Changing IP for thread visiting: {url}")
     change_tor_ip()
@@ -127,12 +126,24 @@ def visit_url(url):
     new_ip = get_current_ip()
     print(f"New IP: {new_ip} for {url}")
 
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_1 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Version/16.1 Mobile/15E148 Safari/537.36",
+    ]
     user_agent = random.choice(user_agents)
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, proxy={"server": TOR_SOCKS_PROXY})
-            context = browser.new_context(ignore_https_errors=True, user_agent=user_agent)
+            browser = p.chromium.launch(
+                headless=False, 
+                proxy={"server": TOR_SOCKS_PROXY}
+            )
+            context = browser.new_context(
+                ignore_https_errors=True, 
+                user_agent=user_agent
+            )
             page = context.new_page()
 
             apply_stealth(page)
@@ -144,14 +155,16 @@ def visit_url(url):
             scroll_page(page)
             next_page_click(page)
 
-            wait_time = random.uniform(15, 30)
+            update_visit_count()  # ✅ Increment visit count
+
+            wait_time = random.uniform(15, 25)
             print(f"[+] Waiting {wait_time:.2f} seconds before visiting the next URL...")
             time.sleep(wait_time)
 
     except Exception as e:
         print(f"[!] Error visiting {url}: {e}")
 
-    finally:
+    finally:  
         try:
             context.close()
             browser.close()
@@ -162,6 +175,7 @@ def visit_url(url):
 # Multi-threading
 def start_browsing(num_threads):
     urls = load_urls()
+
     if not urls:
         print("[!] No URLs found in urls.txt")
         return
